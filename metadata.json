@@ -1,6 +1,6 @@
 {
-  "name": "Panel VPN",
-  "description": "Smart and secure VPN client for connecting to proxy panels with real-time stats, ping latency test, and server management.",
+  "name": "OstaApp",
+  "description": "Smart Android VPN client with Telegram Bot authentication, Cloudflare clean IP endpoint scanner, and proxy panel subscription manager.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

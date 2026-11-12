@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Panel VPN"
+rootProject.name = "OstaApp"
 
 include(":app")
