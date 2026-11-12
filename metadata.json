@@ -1,0 +1,6 @@
+{
+  "name": "Panel VPN",
+  "description": "Smart and secure VPN client for connecting to proxy panels with real-time stats, ping latency test, and server management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
