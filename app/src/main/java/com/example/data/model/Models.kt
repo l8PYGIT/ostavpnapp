@@ -5,10 +5,35 @@ data class TelegramUser(
     val username: String = "",
     val firstName: String = "",
     val authToken: String = "",
+    val apiAccessToken: String = "",
     val walletBalanceToman: Long = 0L,
     val isLoggedIn: Boolean = false,
     val loginTime: Long = 0L
 )
+
+data class AuthSession(
+    val sessionId: String = "",
+    val verificationCode: String = "",
+    val deepLinkUrl: String = "",
+    val expiresInSeconds: Int = 300,
+    val createdAt: Long = System.currentTimeMillis(),
+    val status: AuthSessionStatus = AuthSessionStatus.IDLE
+) {
+    val remainingSeconds: Int
+        get() = ((createdAt + (expiresInSeconds * 1000L) - System.currentTimeMillis()) / 1000L).toInt().coerceAtLeast(0)
+
+    val isExpired: Boolean
+        get() = remainingSeconds <= 0
+}
+
+enum class AuthSessionStatus(val label: String) {
+    IDLE("آماده ایجاد نشست لاگین"),
+    CREATING("در حال ساخت نشست با سرور API..."),
+    PENDING("در انتظار تایید هویت کاربر در ربات تلگرام"),
+    VERIFIED("هویت تایید شد - دریافت سابسکریپشن‌ها از API"),
+    EXPIRED("نشست لاگین منقضی شد"),
+    FAILED("خطا در برقراری ارتباط با API")
+}
 
 data class UserService(
     val id: String,

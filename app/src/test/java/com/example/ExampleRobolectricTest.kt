@@ -18,4 +18,20 @@ class ExampleRobolectricTest {
     val appName = context.getString(R.string.app_name)
     assertEquals("OstaApp", appName)
   }
+
+  @Test
+  fun `repository session creation and user services loading`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val repository = com.example.data.repository.PanelRepository(context)
+    
+    // Initial services should be loaded
+    val services = repository.userServices.value
+    org.junit.Assert.assertTrue("User services should not be empty", services.isNotEmpty())
+    
+    // Session should be created
+    repository.createAuthSession(context = null, openTelegramApp = false)
+    val session = repository.currentAuthSession.value
+    org.junit.Assert.assertNotNull(session)
+    org.junit.Assert.assertTrue(session.sessionId.isNotBlank())
+  }
 }

@@ -86,6 +86,7 @@ fun MainApp(repository: PanelRepository) {
     val trafficHistory by VpnController.trafficHistory.collectAsState()
 
     val telegramUser by repository.telegramUser.collectAsState()
+    val authSession by repository.currentAuthSession.collectAsState()
     val userServices by repository.userServices.collectAsState()
     val activeUserService by repository.activeUserService.collectAsState()
     val botConfig by repository.botConfig.collectAsState()
@@ -315,10 +316,14 @@ fun MainApp(repository: PanelRepository) {
             // Telegram Login Dialog
             if (showTelegramLoginDialog) {
                 TelegramLoginDialog(
+                    authSession = authSession,
                     botConfig = botConfig,
                     isLoading = authLoading,
                     onStartDeepLinkLogin = {
                         repository.startTelegramDeepLinkLogin(context)
+                    },
+                    onCreateSessionOnly = {
+                        repository.createAuthSession(context = context, openTelegramApp = false)
                     },
                     onLoginWithCode = { code ->
                         repository.loginWithTelegramCode(code) { success, msg ->

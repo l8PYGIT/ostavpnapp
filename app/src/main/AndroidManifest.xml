@@ -35,6 +35,9 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
+                    android:scheme="osta"
+                    android:host="auth" />
+                <data
                     android:scheme="panelvpn"
                     android:host="auth" />
             </intent-filter>

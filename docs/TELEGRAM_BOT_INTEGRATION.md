@@ -1,131 +1,149 @@
-# 🤖 راهنمای اتصال ربات تلگرام به اپلیکیشن Panel VPN
+# 🤖 راهنمای اتصال ربات تلگرام به عنوان تاییدکننده هویت (IdP) در OstaApp
 
-این سند نحوه پیاده‌سازی بک‌اند و ربات تلگرام را برای احراز هویت کاربران و ارائه خودکار کانفیگ‌ها به کلاینت اندروید توضیح می‌دهد.
+این سند نحوه پیاده‌سازی ربات تلگرام را به عنوان **تاییدکننده هویت (Identity Provider - IdP)** و ارتباط آن با **سرور Backend API** و اپلیکیشن **OstaApp** توضیح می‌دهد.
 
----
+> 💡 **نکته کلیدی معماری:** اپلیکیشن OstaApp مستقیماً با سرور API شما صحبت می‌کند و تمام اشتراک‌ها، حجم و کانفیگ‌ها را از دیتابیس API می‌خواند. ربات تلگرام به هیچ عنوان وظیفه ساخت کانفیگ یا ذخیره آن را ندارد و صرفاً هویت کاربر تلگرام را برای سشن باز شده در اپلیکیشن تایید (Authorize) می‌کند.
 
-## ۱. چرخه لاگین (Authentication Flow)
-
-اپلیکیشن Panel VPN از سه روش برای ورود کاربر و دریافت سرویس‌ها پشتیبانی می‌کند:
-
-1. **روش دیپ‌لینک (Deep Link - پیشنهادی و ۱ کلیکه):**
-   - اپلیکیشن یک `sessionId` تصادفی تولید کرده و تلگرام را با لینک زیر باز می‌کند:
-     ```
-     tg://resolve?domain=YOUR_BOT_USERNAME&start=login_auth_xxxxxxxx
-     ```
-   - کاربر روی دکمه **Start** در تلگرام کلیک می‌کند.
-   - ربات هویت کاربر را تایید کرده و دکمه شیشه‌ای (Inline Button) برای بازگشت به اپلیکیشن نمایش می‌دهد یا بک‌اند به پولینگ اپلیکیشن پاسخ می‌دهد.
-
-2. **روش بازگشت مستقیم (Direct App Callback via Deep Link):**
-   - ربات تلگرام دکمه بازگشت به اپلیکیشن را با لینک زیر برای کاربر می‌فرستد:
-     ```
-     panelvpn://auth?token=USER_TOKEN&tg_id=USER_ID&username=USER_NAME&name=FIRST_NAME&balance=WALLET_BALANCE&sub_url=SUBSCRIPTION_URL
-     ```
-   - لمس این لینک توسط کاربر، فوراً اپلیکیشن Panel VPN را باز کرده، لاگین را تکمیل و کانفیگ‌ها را بارگذاری می‌کند.
-
-3. **روش کد عددی (Verification Code):**
-   - کاربر در ربات دستور `/login` یا «ورود به اپلیکیشن» را می‌زند.
-   - ربات یک کد یکبار مصرف (مثلاً `839102`) به کاربر نمایش می‌دهد.
-   - کاربر کد را در برنامه وارد کرده و برنامه با فراخوانی متد `POST /api/auth/telegram-code` احراز هویت را نهایی می‌کند.
+برای جزئیات دقیق تمامی اندپوینت‌ها و کدهای نمونه سرور، به [مستندات کامل API و احراز هویت سشن (docs/API_AND_SESSION_AUTH.md)](API_AND_SESSION_AUTH.md) مراجعه کنید.
 
 ---
 
-## ۲. نمونه پیاده‌سازی ربات با پایتون (Python - Aiogram 3.x)
+## ۱. چرخه احراز هویت سشن (Session Authentication Lifecycle)
+
+```
+[ اپلیکیشن OstaApp ]
+       │
+       ▼ (1. ایجاد سشن و دریافت کد ۶ رقمی)
+[ سرور Backend API ] ──► سشن در وضعیت PENDING
+       │
+       ▼ (2. هدایت کاربر با دیپ‌لینک tg://resolve?domain=bot&start=auth_sess_xxx)
+[ ربات تلگرام ]
+       │
+       ▼ (3. نمایش دکمه «تایید ورود به OstaApp»)
+[ کاربر تلگرام دکمه را لمس می‌کند ]
+       │
+       ▼ (4. ربات به API اطلاع می‌دهد: POST /api/auth/session/confirm)
+[ سرور Backend API ] ──► سشن در وضعیت VERIFIED + تولید JWT Bearer Token
+       │
+       ▼ (5. اپلیکیشن با پولینگ توکن را دریافت کرده و اندپوینت /api/user/services را می‌خواند)
+[ تمام اشتراک‌های کاربر در OstaApp بارگذاری می‌شوند ]
+```
+
+---
+
+## ۲. روش‌های ورود کاربر در OstaApp
+
+### ۱. ورود خودکار با دیپ‌لینک (Deep Link - ۱ کلیکه و پیشنهادی):
+- اپلیکیشن سشن را در API ایجاد کرده و لینک زیر را اجرا می‌کند:
+  ```
+  tg://resolve?domain=YOUR_BOT_USERNAME&start=auth_sess_xxxxxxxxxxxx
+  ```
+- کاربر دکمه **Start** و سپس **«تایید ورود در اپلیکیشن»** را می‌زند.
+- ربات با ارسال شناسه کاربر به سرور API سشن را تایید می‌کند.
+- اپلیکیشن در کمتر از ۲ ثانیه متوجه تایید سشن شده و تمام اشتراک‌های کاربر را بارگذاری می‌کند.
+
+### ۲. بازگشت مستقیم با دیپ‌لینک بومی (`osta://auth`):
+- ربات پس از تایید هویت، دکمه شیشه‌ای حاوی لینک زیر را به کاربر نمایش می‌دهد:
+  ```
+  osta://auth?session_id=sess_xxx&tg_id=12345678&username=ali&name=Ali
+  ```
+- کلیک روی این لینک فوراً اپلیکیشن OstaApp را در گوشی باز کرده و فرآیند را تکمیل می‌کند (پشتیبانی سازگار با `panelvpn://auth` نیز محفوظ است).
+
+### ۳. ورود با کد ۶ رقمی سشن (Verification Code):
+- اپلیکیشن یک کد ۶ رقمی اختصاصی سشن (مثلاً `849201`) نمایش می‌دهد.
+- کاربر می‌تواند با ارسال این کد به ربات، یا بالعکس وارد کردن کد دریافتی در اپلیکیشن، ورود را نهایی کند.
+
+---
+
+## ۳. نمونه پیاده‌سازی ربات تلگرام با پایتون (Python - Aiogram 3.x)
 
 ```python
-import os
 import aiohttp
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart, Command
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-API_BASE_URL = "https://api.myvpnbot.com"
+API_SERVER_URL = "https://api.myvpnbot.com"  # آدرس سرور API شما
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
-# ذخیره موقت سشن‌ها در دیتابیس یا حافظه
-sessions_db = {}
 
 @dp.message(CommandStart())
 async def handle_start(message: types.Message):
     args = message.text.split()[1] if len(message.text.split()) > 1 else None
     user_id = str(message.from_user.id)
-    username = message.from_user.username or f"user_{user_id}"
+    username = message.from_user.username or ""
     first_name = message.from_user.first_name or "کاربر"
 
-    # بررسی دیپ‌لینک لاگین اپلیکیشن
-    if args and args.startswith("login_"):
-        session_id = args.replace("login_", "")
+    # بررسی سشن ارسالی از OstaApp
+    if args and args.startswith("auth_"):
+        session_id = args.replace("auth_", "")
         
-        # دریافت لینک سابسکریپشن اختصاصی کاربر از پنل (مثلاً مرزبان یا سنایی)
-        user_sub_url = f"https://sub.myvpnbot.com/sub/{user_id}"
-        wallet_balance = 50000
-
-        # ذخیره وضعیت سشن برای پاسخ به Polling اپلیکیشن
-        sessions_db[session_id] = {
-            "status": "success",
-            "token": f"token_{session_id}",
-            "user": {
-                "telegram_id": user_id,
-                "username": username,
-                "first_name": first_name,
-                "wallet_balance": wallet_balance
-            },
-            "services": [
-                {
-                    "id": f"svc-{user_id}",
-                    "name": "اشتراک اختصاصی ربات تلگرام",
-                    "subscription_url": user_sub_url,
-                    "total_bytes": 50 * 1024 * 1024 * 1024,
-                    "used_bytes": 12 * 1024 * 1024 * 1024,
-                    "expire_timestamp": 1740000000000,
-                    "protocol": "VLESS Reality / Trojan",
-                    "is_default": True
-                }
-            ]
-        }
-
-        # دکمه شیشه‌ای بازگشت مستقیم به اپلیکیشن
-        deep_link = (
-            f"panelvpn://auth?token=token_{session_id}"
-            f"&tg_id={user_id}&username={username}&name={first_name}"
-            f"&balance={wallet_balance}&sub_url={user_sub_url}"
-        )
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 بازگشت و اتصال در اپلیکیشن", url=deep_link)]
+            [InlineKeyboardButton(text="🛡️ تایید ورود به OstaApp", callback_data=f"confirm_{session_id}")],
+            [InlineKeyboardButton(text="❌ لغو", callback_data="cancel_auth")]
         ])
 
         await message.answer(
-            f"سلام {first_name} عزیز! ورود شما به اپلیکیشن Panel VPN تایید شد.\n"
-            f"روی دکمه زیر کلیک کنید تا اشتراک شما مستقیماً در اپلیکیشن فعال شود:",
-            reply_markup=keyboard
+            f"سلام {first_name} عزیز! 👋\n\n"
+            f"درخواست ورود به اپلیکیشن <b>OstaApp</b> از دستگاه اندروید شما دریافت شد.\n\n"
+            f"شناسه سشن: <code>{session_id[:10]}...</code>\n\n"
+            f"آیا ورود به برنامه و دسترسی به اشتراک‌های خود را تایید می‌کنید؟",
+            reply_markup=keyboard,
+            parse_mode="HTML"
         )
     else:
         await message.answer(
-            "به ربات فروش و مدیریت اشتراک‌های وی‌پی‌ان خوش آمدید!\n"
-            "برای ورود در برنامه، گزینه لاگین با تلگرام را در برنامه بزنید."
+            "به ربات احراز هویت OstaApp خوش آمدید!\n"
+            "برای اتصال، لطفاً دکمه «ورود با تلگرام» را در داخل اپلیکیشن OstaApp لمس کنید."
         )
 
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(dp.start_polling(bot))
+@dp.callback_query(F.data.startswith("confirm_"))
+async def handle_confirm(callback: types.CallbackQuery):
+    session_id = callback.data.replace("confirm_", "")
+    user_id = str(callback.from_user.id)
+    username = callback.from_user.username or ""
+    first_name = callback.from_user.first_name or "کاربر"
+
+    # ارسال تاییدیه هویت کاربر به سرور API مرکزی
+    async with aiohttp.ClientSession() as session:
+        payload = {
+            "session_id": session_id,
+            "telegram_id": user_id,
+            "username": username,
+            "first_name": first_name
+        }
+        try:
+            async with session.post(f"{API_SERVER_URL}/api/auth/session/confirm", json=payload) as resp:
+                if resp.status == 200:
+                    deep_link = f"osta://auth?session_id={session_id}&tg_id={user_id}&username={username}"
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🚀 بازگشت سریع به اپلیکیشن OstaApp", url=deep_link)]
+                    ])
+                    await callback.message.edit_text(
+                        "✅ <b>هویت شما با موفقیت تایید شد!</b>\n\n"
+                        "اپلیکیشن OstaApp اکنون در حال بارگذاری تمام اشتراک‌ها و کانفیگ‌های شما از سرور است.\n"
+                        "می‌توانید به اپلیکیشن بازگردید.",
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+                else:
+                    await callback.message.edit_text("❌ خطا در برقراری ارتباط با سرور API یا منقضی شدن سشن.")
+        except Exception as e:
+            await callback.message.edit_text(f"❌ خطا در اتصال به API: {e}")
+            
+    await callback.answer()
+
+@dp.callback_query(F.data == "cancel_auth")
+async def handle_cancel(callback: types.CallbackQuery):
+    await callback.message.edit_text("❌ درخواست ورود به اپلیکیشن لغو گردید.")
+    await callback.answer()
 ```
 
 ---
 
-## ۳. فرمت هدر مصرف حجم در لینک سابسکریپشن
+## ۴. لینک مستندات تکمیلی
 
-اپلیکیشن Panel VPN هدر استاندارد `subscription-userinfo` را از سرور سابسکریپشن شما می‌خواند:
-```http
-HTTP/1.1 200 OK
-Content-Type: text/plain; charset=utf-8
-subscription-userinfo: upload=1073741824; download=15032385536; total=53687091200; expire=1740000000
-```
-- **upload:** حجم آپلود شده به بایت
-- **download:** حجم دانلود شده به بایت
-- **total:** کل حجم مجاز به بایت
-- **expire:** زمان انقضا بر حسب ثانیه یونیکس (Unix Timestamp)
-
-اپلیکیشن این هدر را مستقیماً پارس کرده و نمودار، درصد مصرف، و روزهای باقی‌مانده را بدون نیاز به لاگین مجدد به‌روزرسانی می‌کند.
+- [مستندات کامل API و احراز هویت سشن (docs/API_AND_SESSION_AUTH.md)](API_AND_SESSION_AUTH.md)
+- [راهنمای جامع پروژه و معماری هسته OstaApp (README.md)](../README.md)

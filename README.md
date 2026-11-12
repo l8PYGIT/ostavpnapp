@@ -87,70 +87,88 @@
   <img src="docs/images/architecture_workflow.jpg" alt="OstaApp Architecture" width="100%" />
 </p>
 
+### 🔑 تفکیک دقیق وظایف (Separation of Concerns):
+- **سرور Backend API (`serverApiUrl`):** مدیریت نشست‌های لاگین (`session_id`)، صدور توکن امنیتی JWT، پایگاه داده کاربران و استعلام **تمامی اشتراک‌های فعال و حجم مصرفی**.
+- **ربات تلگرام (Identity Provider - IdP):** صرفاً نقش تاییدکننده هویت کاربر در پیام‌رسان تلگرام را دارد؛ ربات هیچ کانفیگی را ذخیره یا دستکاری نمی‌کند.
+
 ```
-[ Telegram User ]
+[ کاربر اندروید ]
        │
-       ▼ (1. Start Bot /login)
-[ Telegram Bot (Your Server) ]
+       ▼ (1. ایجاد سشن احراز هویت: POST /api/auth/session/create)
+[ سرور Backend API ] ──► صدور session_id و کد ۶ رقمی
        │
-       ▼ (2. Verify & Issue Auth Session)
-[ Backend Panel API ] ◄────── (3. Fetch Subscriptions & Configs) ──────┐
-       │                                                                │
-       ▼ (4. Deep Link / Session Poll)                                  │
-[ Android OstaApp Client ] ─────────────────────────────────────────────┘
+       ▼ (2. هدایت کاربر: tg://resolve?domain=bot&start=auth_sess_xxx)
+[ ربات تلگرام (Authenticator) ]
        │
-       ├─► [ Cloudflare Clean IP Scanner ] ── (Replaces CDN host IP with clean endpoint)
+       ▼ (3. تایید هویت توسط کاربر در تلگرام: POST /api/auth/session/confirm)
+[ سرور Backend API ] ──► صدور JWT Bearer Access Token
        │
-       ▼ (5. Build TUN Interface & Start VPN)
-[ Encrypted Tunnel (VLESS Reality / Trojan / VMess / Shadowsocks) ]
+       ▼ (4. دریافت خودکار تمامی اشتراک‌ها: GET /api/user/services)
+[ اپلیکیشن OstaApp ]
        │
-       ▼
-[ Global Secure Internet ]
+       ├─► [ اسکنر اندپوینت‌های تمیز کلودفلر ] ── (جایگزینی هوشمند Host آی‌پی‌های CDN)
+       │
+       ▼ (5. ساخت اینترفیس بومی TUN و شروع تونل رمزنگاری‌شده)
+[ اینترنت آزاد، امن و پرسرعت ]
 ```
 
 ---
 
-## 📡 مشخصات API و تعامل با ربات تلگرام (Backend API Contract)
+## 📡 مشخصات API و سشن‌های احراز هویت (Backend API Contract)
 
-کلاینت به راحتی می‌تواند به هر وب‌سرور یا اسکریپت ربات تلگرام متصل شود:
+برای مشاهده مستندات جامع، کدهای نمونه بک‌اند با **FastAPI** و **Express** و توضیحات امنیتی به **[مستندات کامل API و احراز هویت سشن (docs/API_AND_SESSION_AUTH.md)](docs/API_AND_SESSION_AUTH.md)** مراجعه کنید.
 
-### ۱. تایید کد تلگرام (`POST /api/auth/telegram-code`)
+### ۱. ایجاد سشن لاگین (`POST /api/auth/session/create`)
+اپلیکیشن با این درخواست یک سشن ۵ دقیقه‌ای با کد ۶ رقمی در API ایجاد می‌کند:
 ```json
 {
-  "code": "849201"
+  "app": "OstaApp",
+  "platform": "android",
+  "version": "1.0.0"
 }
 ```
 
-**پاسخ موفق:**
+### ۲. استعلام وضعیت سشن (`GET /api/auth/session/status?session_id=...`)
+اپلیکیشن به صورت پولینگ (هر ۲ ثانیه) وضعیت تایید هویت توسط ربات تلگرام را استعلام می‌نماید:
+```json
+{
+  "status": "verified",
+  "access_token": "eyJhbGciOiJIUzI1NiIsIn...",
+  "user": {
+    "telegram_id": "98273612",
+    "username": "ostadev",
+    "first_name": "علی",
+    "wallet_balance": 45000
+  }
+}
+```
+
+### ۳. دریافت تمامی اشتراک‌های کاربر (`GET /api/user/services`)
+با ارسال توکن Bearer در هدر درخواست، تمامی اشتراک‌های اختصاصی، حجمی و نامحدود کاربر بارگذاری می‌شوند:
 ```json
 {
   "status": "success",
-  "token": "sess_8f92b7c109",
-  "user": {
-    "telegram_id": "98273612",
-    "username": "user_parham",
-    "first_name": "پرهام",
-    "wallet_balance": 50000
-  },
+  "total_services": 2,
   "services": [
     {
-      "id": "svc-01",
-      "name": "اشتراک VIP دوماهه آلمان",
-      "subscription_url": "https://sub.myvpn.site/sub/user_parham_token",
+      "id": "sub_vip_01",
+      "name": "اشتراک ۱ ماهه VIP آلمان و فنلاند",
+      "subscription_url": "https://api.myvpnbot.com/sub/de_vip_token",
       "total_bytes": 53687091200,
-      "used_bytes": 15032385536,
-      "expire_timestamp": 1740000000000,
+      "used_bytes": 14032385536,
+      "expire_timestamp": 1746000000000,
       "protocol": "VLESS Reality / Trojan",
+      "server_count": 6,
       "is_default": true
     }
   ]
 }
 ```
 
-### ۲. ورود مستقیم با Deep Link (`panelvpn://auth`)
-ربات می‌تواند در پیام تایید، دکمه شیشه‌ای (Inline Button) قرار دهد:
+### ۴. بازگشت مستقیم با دیپ‌لینک اختصاصی (`osta://auth`)
+ربات تلگرام می‌تواند پس از تایید، کاربر را مستقیماً به برنامه هدایت کند:
 ```
-panelvpn://auth?token=XYZ&tg_id=12345678&username=ali&name=Ali&balance=50000&sub_url=https://sub.myvpn.site/sub/ali
+osta://auth?session_id=sess_12345&tg_id=98273612&username=ostadev
 ```
 
 ---
