@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.AuthSessionStatus
 import com.example.data.model.VpnStatus
 import com.example.data.repository.PanelRepository
 import com.example.ui.components.AddPanelDialog
@@ -311,6 +313,21 @@ fun MainApp(repository: PanelRepository) {
                     onTestSinglePing = { id -> repository.testSinglePing(id) },
                     onDismissRequest = { showServerSheet = false }
                 )
+            }
+
+            // Auto-create login session when dialog opens & auto-close upon verification
+            LaunchedEffect(showTelegramLoginDialog) {
+                if (showTelegramLoginDialog && (authSession.sessionId.isBlank() || authSession.status != AuthSessionStatus.PENDING || authSession.isExpired)) {
+                    repository.createAuthSession(context = context, openTelegramApp = false)
+                }
+            }
+
+            LaunchedEffect(authSession.status, showTelegramLoginDialog) {
+                if (showTelegramLoginDialog && authSession.status == AuthSessionStatus.VERIFIED) {
+                    kotlinx.coroutines.delay(700)
+                    Toast.makeText(context, "هویت تایید شد و اشتراک‌ها از API دریافت شدند!", Toast.LENGTH_SHORT).show()
+                    showTelegramLoginDialog = false
+                }
             }
 
             // Telegram Login Dialog

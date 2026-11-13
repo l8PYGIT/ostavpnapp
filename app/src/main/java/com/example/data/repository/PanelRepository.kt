@@ -352,16 +352,18 @@ class PanelRepository(private val context: Context) {
 
             // Open Telegram App if requested
             if (openTelegramApp && context != null) {
-                launchTelegramDeepLink(context, botUsername, newSession.sessionId)
+                launchTelegramDeepLink(context, _botConfig.value.botUsername, newSession.sessionId, newSession.deepLinkUrl)
             }
 
             // Start polling API for session verification by Telegram Bot
-            pollAuthSessionStatus(newSession.sessionId)
+            pollAuthSessionStatus(newSession.sessionId, demoAutoVerify = openTelegramApp)
         }
     }
 
-    private fun launchTelegramDeepLink(context: Context, botUsername: String, sessionId: String) {
-        val tgUri = android.net.Uri.parse("tg://resolve?domain=$botUsername&start=auth_$sessionId")
+    private fun launchTelegramDeepLink(context: Context, botUsername: String, sessionId: String, deepLinkUrl: String = "") {
+        val tgUri = android.net.Uri.parse(
+            deepLinkUrl.ifBlank { "tg://resolve?domain=$botUsername&start=auth_$sessionId" }
+        )
         val webUri = android.net.Uri.parse("https://t.me/$botUsername?start=auth_$sessionId")
         addLog(LogLevel.INFO, "هدایت به ربات تلگرام (@$botUsername) برای تایید هویت کاربر...")
 
@@ -371,10 +373,14 @@ class PanelRepository(private val context: Context) {
             }
             context.startActivity(intent)
         } catch (_: Exception) {
-            val intent = Intent(Intent.ACTION_VIEW, webUri).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, webUri).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            } catch (_: Exception) {
+                addLog(LogLevel.WARNING, "اپلیکیشن تلگرام یا مرورگر روی دستگاه یافت نشد.")
             }
-            context.startActivity(intent)
         }
     }
 
@@ -382,15 +388,16 @@ class PanelRepository(private val context: Context) {
      * Polls GET /api/auth/session/status?session_id=... until the user confirms in the Telegram Bot.
      * When confirmed, gets the JWT Bearer access_token and queries all user services from the API.
      */
-    private fun pollAuthSessionStatus(sessionId: String) {
+    private fun pollAuthSessionStatus(sessionId: String, demoAutoVerify: Boolean = true) {
         sessionPollingJob?.cancel()
         sessionPollingJob = coroutineScope.launch {
             val apiUrl = _botConfig.value.serverApiUrl
             var pollCount = 0
             val maxPolls = 150 // up to 300 seconds (every 2s)
 
-            // In demo mode or fallback, simulate verification after 4 seconds
+            // In demo mode, simulate bot confirmation only after the user triggers the Telegram deep link
             if (apiUrl.contains("demo") || apiUrl.contains("myvpnbot.com")) {
+                if (!demoAutoVerify) return@launch
                 kotlinx.coroutines.delay(4000)
                 if (_currentAuthSession.value.sessionId == sessionId &&
                     _currentAuthSession.value.status == AuthSessionStatus.PENDING) {
@@ -515,40 +522,57 @@ class PanelRepository(private val context: Context) {
                         try { httpClient.newCall(request).execute() } catch (_: Exception) { null }
                     }
 
-                    if (response != null && response.isSuccessful) {
+                    if (response != null) {
                         val body = response.body?.string() ?: ""
-                        val root = org.json.JSONObject(body)
-                        val accessToken = root.optString("access_token", root.optString("token", ""))
-                        val userObj = root.optJSONObject("user")
+                        if (response.isSuccessful) {
+                            val root = org.json.JSONObject(body)
+                            val accessToken = root.optString("access_token", root.optString("token", ""))
+                            val userObj = root.optJSONObject("user")
 
-                        val tgId = userObj?.optString("telegram_id", cleanCode.take(8)) ?: cleanCode.take(8)
-                        val username = userObj?.optString("username", "user_$tgId") ?: "user_$tgId"
-                        val firstName = userObj?.optString("first_name", "کاربر تایید شده") ?: "کاربر تایید شده"
-                        val balance = userObj?.optLong("wallet_balance", 50000L) ?: 50000L
+                            val tgId = userObj?.optString("telegram_id", cleanCode.take(8)) ?: cleanCode.take(8)
+                            val username = userObj?.optString("username", "user_$tgId") ?: "user_$tgId"
+                            val firstName = userObj?.optString("first_name", "کاربر تایید شده") ?: "کاربر تایید شده"
+                            val balance = userObj?.optLong("wallet_balance", 50000L) ?: 50000L
 
-                        val loggedUser = TelegramUser(
-                            telegramId = tgId,
-                            username = username,
-                            firstName = firstName,
-                            authToken = currentSessionId.ifBlank { "token_$cleanCode" },
-                            apiAccessToken = accessToken,
-                            walletBalanceToman = balance,
-                            isLoggedIn = true,
-                            loginTime = System.currentTimeMillis()
-                        )
-                        _telegramUser.value = loggedUser
-                        saveUser(loggedUser)
-                        _currentAuthSession.update { it.copy(status = AuthSessionStatus.VERIFIED) }
+                            val loggedUser = TelegramUser(
+                                telegramId = tgId,
+                                username = username,
+                                firstName = firstName,
+                                authToken = currentSessionId.ifBlank { "token_$cleanCode" },
+                                apiAccessToken = accessToken,
+                                walletBalanceToman = balance,
+                                isLoggedIn = true,
+                                loginTime = System.currentTimeMillis()
+                            )
+                            _telegramUser.value = loggedUser
+                            saveUser(loggedUser)
+                            _currentAuthSession.update { it.copy(status = AuthSessionStatus.VERIFIED) }
 
-                        addLog(LogLevel.SUCCESS, "کد توسط API تایید شد. دریافت لیست اشتراک‌ها...")
-                        fetchAllUserServicesFromApi(accessToken, userObj)
-                        onResult(true, "ورود با موفقیت انجام شد و اشتراک‌ها دریافت شدند.")
-                        return@launch
+                            addLog(LogLevel.SUCCESS, "کد توسط API تایید شد. دریافت لیست اشتراک‌ها...")
+                            fetchAllUserServicesFromApi(accessToken, userObj)
+                            _authLoading.value = false
+                            withContext(Dispatchers.Main) {
+                                onResult(true, "ورود با موفقیت انجام شد و اشتراک‌ها دریافت شدند.")
+                            }
+                            return@launch
+                        } else {
+                            val errMsg = try {
+                                org.json.JSONObject(body).optString("detail", "کد وارد شده نامعتبر یا منقضی است.")
+                            } catch (_: Exception) { "خطا در تایید کد (${response.code})" }
+                            addLog(LogLevel.ERROR, "خطای سرور API در تایید کد: $errMsg")
+                            _authLoading.value = false
+                            withContext(Dispatchers.Main) {
+                                onResult(false, errMsg)
+                            }
+                            return@launch
+                        }
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                addLog(LogLevel.ERROR, "خطا در ارتباط با API: ${e.message}")
+            }
 
-            // Demo / Fallback verification
+            // Demo / Fallback verification when using default demo server
             kotlinx.coroutines.delay(900)
             val demoAccessToken = "osta_jwt_" + UUID.randomUUID().toString().replace("-", "")
             val detectedId = if (cleanCode.length >= 6) cleanCode.take(8) else "83910248"
@@ -568,7 +592,10 @@ class PanelRepository(private val context: Context) {
 
             fetchAllUserServicesFromApi(demoAccessToken)
             addLog(LogLevel.SUCCESS, "کد تایید شد و تمامی اشتراک‌ها از سرور بارگذاری شدند.")
-            onResult(true, "خوش آمدید! اشتراک‌های فعال شما با موفقیت لود شدند.")
+            _authLoading.value = false
+            withContext(Dispatchers.Main) {
+                onResult(true, "خوش آمدید! اشتراک‌های فعال شما با موفقیت لود شدند.")
+            }
         }
     }
 
@@ -577,7 +604,16 @@ class PanelRepository(private val context: Context) {
     }
 
     fun startTelegramDeepLinkLogin(context: Context) {
-        createAuthSession(context = context, openTelegramApp = true)
+        val existing = _currentAuthSession.value
+        if (existing.sessionId.isNotBlank() &&
+            existing.status == AuthSessionStatus.PENDING &&
+            !existing.isExpired
+        ) {
+            launchTelegramDeepLink(context, _botConfig.value.botUsername, existing.sessionId, existing.deepLinkUrl)
+            pollAuthSessionStatus(existing.sessionId, demoAutoVerify = true)
+        } else {
+            createAuthSession(context = context, openTelegramApp = true)
+        }
     }
 
     fun loginWithTelegramCredentials(telegramId: String, token: String, onResult: (Boolean, String) -> Unit) {
@@ -602,75 +638,90 @@ class PanelRepository(private val context: Context) {
 
             fetchAllUserServicesFromApi(loggedUser.apiAccessToken)
             addLog(LogLevel.SUCCESS, "ورود کاربر $telegramId با موفقیت انجام شد.")
-            onResult(true, "ورود موفقیت‌آمیز بود.")
             _authLoading.value = false
+            withContext(Dispatchers.Main) {
+                onResult(true, "ورود موفقیت‌آمیز بود.")
+            }
         }
     }
 
     fun handleDeepLinkAuth(uri: android.net.Uri, onResult: (Boolean, String) -> Unit) {
         coroutineScope.launch {
             try {
-                // Format: panelvpn://auth?token=XYZ&tg_id=12345678&username=ali&name=Ali
-                val token = uri.getQueryParameter("token") ?: uri.getQueryParameter("session_id") ?: ""
+                // Format: osta://auth?session_id=sess_xxx&tg_id=12345678&username=ali
+                // or legacy: panelvpn://auth?token=XYZ&tg_id=12345678&username=ali&name=Ali
+                val sessionId = uri.getQueryParameter("session_id") ?: ""
+                val token = uri.getQueryParameter("access_token") ?: uri.getQueryParameter("token") ?: sessionId
                 val tgId = uri.getQueryParameter("tg_id") ?: uri.getQueryParameter("telegram_id") ?: ""
                 val username = uri.getQueryParameter("username") ?: "user_$tgId"
                 val firstName = uri.getQueryParameter("name") ?: uri.getQueryParameter("first_name") ?: "کاربر تلگرام"
                 val balance = uri.getQueryParameter("balance")?.toLongOrNull() ?: 50000L
-                val subUrl = uri.getQueryParameter("sub_url") ?: "${_botConfig.value.serverApiUrl}/sub/$token"
 
-                if (token.isBlank() && tgId.isBlank()) {
+                if (token.isBlank() && tgId.isBlank() && sessionId.isBlank()) {
                     onResult(false, "اطلاعات ورود از تلگرام ناقص بود.")
                     return@launch
                 }
 
+                // If we have a sessionId and a real backend, verify & retrieve JWT access_token
+                val apiUrl = _botConfig.value.serverApiUrl
+                var finalAccessToken = uri.getQueryParameter("access_token") ?: ""
+                var resolvedTgId = tgId
+                var resolvedUsername = username.removePrefix("@")
+                var resolvedName = firstName
+                var resolvedBalance = balance
+
+                if (sessionId.isNotBlank() && !apiUrl.contains("demo") && !apiUrl.contains("myvpnbot.com")) {
+                    try {
+                        val req = Request.Builder()
+                            .url("$apiUrl/api/auth/session/status?session_id=$sessionId")
+                            .build()
+                        val resp = withContext(Dispatchers.IO) {
+                            try { httpClient.newCall(req).execute() } catch (_: Exception) { null }
+                        }
+                        if (resp != null && resp.isSuccessful) {
+                            val root = org.json.JSONObject(resp.body?.string() ?: "{}")
+                            if (root.optString("status").equals("verified", ignoreCase = true)) {
+                                finalAccessToken = root.optString("access_token", finalAccessToken)
+                                root.optJSONObject("user")?.let { u ->
+                                    resolvedTgId = u.optString("telegram_id", resolvedTgId)
+                                    resolvedUsername = u.optString("username", resolvedUsername)
+                                    resolvedName = u.optString("first_name", resolvedName)
+                                    resolvedBalance = u.optLong("wallet_balance", resolvedBalance)
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (finalAccessToken.isBlank()) {
+                    finalAccessToken = "osta_jwt_${token.ifBlank { sessionId }}"
+                }
+
                 val loggedUser = TelegramUser(
-                    telegramId = tgId.ifBlank { "98273612" },
-                    username = username.removePrefix("@"),
-                    firstName = firstName,
-                    authToken = token,
-                    walletBalanceToman = balance,
+                    telegramId = resolvedTgId.ifBlank { "98273612" },
+                    username = resolvedUsername.ifBlank { "tg_user" },
+                    firstName = resolvedName,
+                    authToken = token.ifBlank { sessionId },
+                    apiAccessToken = finalAccessToken,
+                    walletBalanceToman = resolvedBalance,
                     isLoggedIn = true,
                     loginTime = System.currentTimeMillis()
                 )
                 _telegramUser.value = loggedUser
                 saveUser(loggedUser)
+                _currentAuthSession.update { it.copy(status = AuthSessionStatus.VERIFIED) }
 
-                val newService = UserService(
-                    id = "svc-tg-${loggedUser.telegramId}",
-                    serviceName = "اشتراک متصل به تلگرام (@${loggedUser.username})",
-                    subscriptionUrl = subUrl,
-                    totalBytes = 60L * 1024 * 1024 * 1024,
-                    usedBytes = 14L * 1024 * 1024 * 1024,
-                    expireDateTimestamp = System.currentTimeMillis() + (28L * 24 * 3600 * 1000),
-                    status = ServiceStatus.ACTIVE,
-                    protocol = "VLESS Reality / Trojan",
-                    serverCount = 6,
-                    isDefault = true
-                )
-                _userServices.value = listOf(newService)
-                _activeUserService.value = newService
+                addLog(LogLevel.SUCCESS, "بازگشت از تلگرام تایید شد (@${loggedUser.username}). در حال دریافت اشتراک‌ها از API...")
+                fetchAllUserServicesFromApi(finalAccessToken)
 
-                val panel = PanelConfig(
-                    id = newService.id,
-                    name = newService.serviceName,
-                    subscriptionUrl = newService.subscriptionUrl,
-                    username = loggedUser.username,
-                    totalBytes = newService.totalBytes,
-                    usedBytes = newService.usedBytes,
-                    expireDateTimestamp = newService.expireDateTimestamp,
-                    isActive = true,
-                    serverCount = 6
-                )
-                _panels.value = listOf(panel)
-                _activePanel.value = panel
-
-                addLog(LogLevel.SUCCESS, "ورود مستقیم از طریق لینک تلگرام با موفقیت انجام شد: @${loggedUser.username}")
-                testAllPings()
-                refreshSubscription(panel)
-                onResult(true, "خوش آمدید @${loggedUser.username}! کانفیگ‌های شما با موفقیت متصل شدند.")
+                withContext(Dispatchers.Main) {
+                    onResult(true, "خوش آمدید @${loggedUser.username}! تمام اشتراک‌های شما از API دریافت شدند.")
+                }
             } catch (e: Exception) {
                 addLog(LogLevel.ERROR, "خطا در پردازش لینک تلگرام: ${e.message}")
-                onResult(false, "خطا در پردازش اطلاعات ورود تلگرام.")
+                withContext(Dispatchers.Main) {
+                    onResult(false, "خطا در پردازش اطلاعات ورود تلگرام.")
+                }
             }
         }
     }

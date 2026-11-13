@@ -87,7 +87,7 @@ class PanelVpnService : VpnService() {
                 delay(600)
 
                 val builder = Builder()
-                    .setSession("Panel VPN: $serverName")
+                    .setSession("OstaApp: $serverName")
                     .setMtu(mtu.coerceIn(1280, 1500))
                     .addAddress("10.8.0.2", 24)
                     .addRoute("0.0.0.0", 0)
@@ -203,7 +203,7 @@ class PanelVpnService : VpnService() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Panel VPN - پنل اختصاصی")
+            .setContentTitle("OstaApp - متصل‌کننده هوشمند")
             .setContentText(statusText)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(mainPendingIntent)

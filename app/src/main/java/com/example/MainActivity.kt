@@ -66,8 +66,8 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIncomingIntent(intent: Intent?) {
         val uri: Uri? = intent?.data
-        if (uri != null && uri.scheme == "panelvpn" && uri.host == "auth") {
-            repository.handleDeepLinkAuth(uri) { success, msg ->
+        if (uri != null && (uri.scheme == "osta" || uri.scheme == "panelvpn") && uri.host == "auth") {
+            repository.handleDeepLinkAuth(uri) { _, msg ->
                 Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
             }
         }

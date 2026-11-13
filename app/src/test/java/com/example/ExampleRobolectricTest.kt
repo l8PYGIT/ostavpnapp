@@ -28,10 +28,16 @@ class ExampleRobolectricTest {
     val services = repository.userServices.value
     org.junit.Assert.assertTrue("User services should not be empty", services.isNotEmpty())
     
-    // Session should be created
-    repository.createAuthSession(context = null, openTelegramApp = false)
+    // Session should be created asynchronously
+    val latch = java.util.concurrent.CountDownLatch(1)
+    repository.createAuthSession(context = null, openTelegramApp = false) {
+      latch.countDown()
+    }
+    val completed = latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+    org.junit.Assert.assertTrue("Session creation timed out", completed)
     val session = repository.currentAuthSession.value
     org.junit.Assert.assertNotNull(session)
     org.junit.Assert.assertTrue(session.sessionId.isNotBlank())
+    org.junit.Assert.assertTrue(session.verificationCode.length == 6)
   }
 }
